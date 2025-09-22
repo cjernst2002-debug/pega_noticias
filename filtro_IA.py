@@ -4,7 +4,7 @@ from typing import List, Dict
 
 # =============== HABILITADOR ===============
 # Pon "Si" para usar la IA (llama a OpenAI) o "No" para saltarla.
-Correr_codigo = "No"
+Correr_codigo = "Si"
 # ==========================================
 
 VERBOSE = True
