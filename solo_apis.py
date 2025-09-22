@@ -8,12 +8,9 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone, time as dtime
-import time as _time
+from datetime import datetime, timedelta, timezone
 import sys
 import os
-
-#comando para correrlo automaticamente: py solo_apis.py --once
 
 # ===== IA: módulo externo =====
 # Debe existir filtro_IA.py con classify_batch(inputs) -> [{"id": ..., "categoria": ...}, ...]
@@ -21,7 +18,7 @@ from filtro_IA import classify_batch
 
 # ===================== CONFIGURACIÓN =====================
 # <- newsapi.ai / Event Registry
-ER_API_KEY   = os.getenv("ER_API_KEY", "")
+ER_API_KEY = os.getenv("ER_API_KEY", "").strip()
 
 # Fuentes a consultar (por host) usando Event Registry
 ER_SOURCES = ["df.cl", "latercera.com", "emol.com"]
@@ -40,7 +37,7 @@ DOMAIN_DISPLAY = {
 
 # Límite por empresa y ventana
 DOMAIN_LIMIT = 100
-HOURS_BACK = 24  # puedes cambiar a 48, etc.
+HOURS_BACK = 24  # será sobrescrito dinámicamente en run_once()
 
 # Cantidad máxima a pedirle a ER por fuente
 ER_MAX_ITEMS_RAW = 1000  # ↑ techo alto para no cortar recall
@@ -51,23 +48,20 @@ DEBUG_SUMMARY = True
 # Zona horaria Chile
 CL_TZ = ZoneInfo("America/Santiago")
 
-# ============== PROGRAMACIÓN (ENVÍO DIARIO) ==============
-# Hora diaria de envío en Chile (formato "HH:MM", 24h)
-DAILY_SEND_TIME = "13:19"
-# Si quieres limitar a lunes-viernes, pon True
-WEEKDAYS_ONLY = False  # True = sólo L-V
-
 # ============== CORREO ==============
-REMITENTE    = os.getenv("REMITENTE", "")      # <-- cambia aquí
-DESTINATARIO = os.getenv("DESTINATARIO", "") # <-- cambia aquí
-APP_PASSWORD = os.getenv("APP_PASSWORD", "")   # <-- Gmail: Contraseña de aplicación
+REMITENTE     = os.getenv("REMITENTE", "").strip()
+DESTINATARIO  = os.getenv("DESTINATARIO", "").strip()
+DESTINATARIO2 = os.getenv("DESTINATARIO2", "").strip()  # ← segundo destinatario opcional
+APP_PASSWORD  = os.getenv("APP_PASSWORD", "").strip()   # Gmail: Contraseña de aplicación
 
-if not all([REMITENTE, DESTINATARIO, APP_PASSWORD]):
-    print("Faltan REMITENTE, DESTINATARIO o APP_PASSWORD. Configúralos como Secrets en GitHub.")
+RECIPIENTS = [e for e in [DESTINATARIO, DESTINATARIO2] if e]
+
+if not REMITENTE or not APP_PASSWORD or not RECIPIENTS:
+    print("Faltan REMITENTE, APP_PASSWORD o DESTINATARIO/DESTINATARIO2. Configúralos como Secrets en GitHub.")
     sys.exit(1)
 
-# ===================== EMPRESAS (PEGA AQUÍ TU LISTA) =====================
-# ¡IMPORTANTE! Pega tu lista real de empresas aquí:
+# ===================== EMPRESAS (PEGA TU LISTA) =====================
+# Pega aquí tu lista real de empresas:
 empresas = [
     "Clínica Indisa S.A.", "PAZ Corp S.A.", "SAAM S.A.", "Socovesa S.A.", "Watts S.A.",
     "Hortifrut S.A.", "Empresas Iansa S.A.", "Embonor S.A.", "Inversiones Lipigas S.A.",
@@ -87,8 +81,7 @@ empresas = [
     "LATAM Airlines Group S.A.", "Sociedad Química y Minera de Chile S.A.", "Quiñenco S.A.",
     "Compañía Sudamericana de Vapores S.A.", "Cencosud S.A.", "S.A.C.I. Falabella"
 ]
-
-# ----------------- ALIAS (PEGA AQUÍ TUS ALIAS) --------------------
+# ----------------- ALIAS (PEGA TUS ALIAS) --------------------
 EMPRESA_ALIASES = {
     "Clínica Indisa S.A.": ["Clínica Indisa", "Clinica Indisa", "INDISA", "Instituto de Diagnóstico", "Instituto de Diagnostico",
                             "Clínica Indisa S.A.", "Clinica Indisa S.A."],
@@ -127,7 +120,7 @@ EMPRESA_ALIASES = {
     "Empresas La Polar S.A.": ["La Polar", "Empresas La Polar", "LaPolar", "La Polar S.A."],
     "Masisa S.A.": ["Masisa"],
     "Enjoy S.A.": ["Enjoy", "Enjoy Casinos"],
-    "Embotelladora Andina S.A.": ["Coca-Cola Andina", "Andina B", "Andina A", "Coca Cola Andina", "Andina S.A."],
+    "Embotelladora Andina S.A.": ["Andina", "Coca-Cola Andina", "Andina B", "Andina A", "Coca Cola Andina", "Andina S.A."],
     "Compañía de Cervecerías Unidas S.A.": ["CCU", "Compañía de Cervecerías Unidas", "Compania de Cervecerias Unidas", "Cervecerías Unidas", "Cervecerias Unidas",
                                             "Compañía Cervecerías Unidas", "Compania Cervecerias Unidas"],
     "Viña Concha y Toro S.A.": ["Concha y Toro", "Viña Concha y Toro", "VCT", "Viña Concha y Toro S.A.", "Concha y Toro S.A."],
@@ -163,20 +156,18 @@ EMPRESA_ALIASES = {
                            "Sodimac", "Homecenter", "Tottus", "Banco Falabella"],  # ⚠ marcas
 }
 
-# ===================== INDUSTRIAS (PEGA AQUÍ TUS LISTAS) =====================
-# Switch: si True, sólo se mantienen noticias que calzan con al menos una industria
+# ===================== INDUSTRIAS (PEGA TUS LISTAS) =====================
 INDUSTRIA_MUST_MATCH = False
-
 INDUSTRIA_KEYWORDS = {
-    "Bancaria": [
-        "hecho esencial cmf","resultados trimestrales","utilidad neta",
+    "bancaria": [
+        "hecho esencial cmf","resultados trimestrales","resultados 2t25","utilidad neta",
         "roe","margen de interes","nim","provisiones","cartera vencida","morosidad 90 dias",
         "colocaciones","aumento de capital","dividendo","colocacion de bonos","bono subordinado",
         "bono verde","emision 144a","rating fitch","rating moodys","standard and poors",
         "fusion bancaria","adquisicion banco","portabilidad financiera","basilea iii",
         "indice de capital","sancion cmf","ciberataque bancario","plan estrategico banco"
     ],
-    "Energia": [
+    "energia": [
         "licitacion de suministro","adjudicacion suministro","ppa","precio nudo","precio spot",
         "coordinador electrico nacional","cen","declaracion de indisponibilidad","mantenimiento programado",
         "curtailment","congestion","bess","almacenamiento de baterias","linea 220 kv","linea 500 kv",
@@ -185,7 +176,7 @@ INDUSTRIA_KEYWORDS = {
         "tarifa de distribucion","vad","netbilling","plan de expansion de transmision","eia ingresado",
         "rca aprobada","resolucion sea"
     ],
-    "Mineria": [
+    "mineria": [
         "eia ingresado","rca aprobada","sernageomin","cochilco","estudio de prefactibilidad",
         "estudio de factibilidad","capex minero","plan minero","produccion de cobre","produccion de litio",
         "catodos","concentrado","contrato offtake","oferta vinculante","planta desaladora","relaves",
@@ -193,35 +184,35 @@ INDUSTRIA_KEYWORDS = {
         "royalty minero","plan de cierre","permisos sectoriales","inicio de construccion",
         "comisionamiento","mou con codelco","joint venture minero","ppa para faena"
     ],
-    "Retail": [
-        "resultados trimestrales","ventas mismas tiendas","same store sales","sss",
+    "retail": [
+        "resultados 2t25","resultados trimestrales","ventas mismas tiendas","same store sales","sss",
         "ebitda retail","margen bruto","inventarios","apertura de tienda","cierre de tienda",
         "reorganizacion judicial","centro de distribucion","omnicanalidad","ecommerce","marketplace",
         "programa de fidelizacion","cyberday","black friday","ticket promedio","trafico en tiendas",
         "capex de aperturas","guidance de ventas","acuerdo con proveedor"
     ],
-    "Inmobiliario": [
+    "inmobiliario": [
         "preventas","venta en verde","permiso de edificacion","recepcion final","multifamily",
         "build to rent","btr","arriendo residencial","vacancia residencial","absorcion","stock de viviendas",
         "uf m2","tasacion","paralizacion de proyecto","financiamiento hipotecario","alza tasas hipotecarias",
         "subsidio ds19","costo de construccion","plan maestro","cambio de uso de suelo","loteo",
         "plan regulador","joint venture inmobiliario"
     ],
-    "Construccion": [
+    "construccion": [
         "licitacion mop","adjudicacion mop","contrato epc","estado de pago","reajuste polinomico",
         "modificacion contractual","termino anticipado de contrato","avance fisico","inicio de obras",
         "paralizacion de obras","arbitraje de obra","recepcion provisoria","recepcion definitiva",
         "accidente laboral","insolvencia constructora","liquidacion","consorcio constructor",
         "oferta economica","garantia de fiel cumplimiento"
     ],
-    "Salud": [
+    "salud": [
         "superintendencia de salud","isapres fallo suprema","tabla de factores","copagos",
         "convenio con fonasa","habilitacion sanitaria","apertura de clinica","expansion hospitalaria",
         "licitacion servicios de salud","adquisicion de clinica","compra de prestador","camas criticas",
         "capex clinico","acreditacion en salud","contrato con aseguradoras","telemedicina convenio",
         "sancion superintendencia de salud","ciberataque a clinica","brecha de datos pacientes"
     ],
-    "Tecnologia": [
+    "tecnologia": [
         "ciberataque","ransomware","filtracion de datos","data center","region de datos","cloud publica",
         "contrato cloud","hiperescalador","hiperscaler","ia generativa","modelo de lenguaje",
         "semiconductores","centro de desarrollo","subtel licitacion 5g","bloques de espectro",
@@ -229,7 +220,7 @@ INDUSTRIA_KEYWORDS = {
         "open banking","sandbox regulatorio","levantamiento de capital","ronda serie a","ronda serie b",
         "alianza tecnologica","despliegue de fibra optica"
     ],
-    "Infraestructura": [
+    "infraestructura": [
         "concesion vial","concesion aeroportuaria","concesion portuaria","licitacion de concesion",
         "adjudicacion de concesion","oferta economica vpi","vpi","inicio de obras","avance de obras",
         "recepcion provisoria","recepcion definitiva","tarifa de peaje","alza de peajes",
@@ -237,7 +228,7 @@ INDUSTRIA_KEYWORDS = {
         "obras adicionales","puente","tunel","ferrocarril","efe","linea de metro","embalse",
         "obra hidraulica"
     ],
-    "Malls": [
+    "malls": [
         "gla","superficie arrendable","ocupacion de malls","vacancia de malls","ventas de arrendatarios",
         "tenant sales","renta variable","canon de arriendo","arriendo variable","tenant mix",
         "apertura de tienda ancla","tienda ancla","expansion de mall","remodelacion de mall",
@@ -344,6 +335,7 @@ def detectar_industrias(titulo: str, descripcion: str) -> list[str]:
                 continue
             hits.append(industria)
     return hits
+
 # ===== Helpers para consolidación y formato de clasificación =====
 CAT_RANK = {"ALTA": 3, "MEDIA": 2, "BAJA": 1, "SIN CLASIFICAR": 0}
 
@@ -425,9 +417,32 @@ def _group_and_collapse_by_url(noticias: list[dict], klass_map: dict[str, str]) 
     out = list(groups.values())
     out.sort(key=lambda x: (_iso_to_dt(x.get("fecha") or "") or datetime.min), reverse=True)
     return out
+
 # --------- Sesión, cachés y stats ----------
 RUN_STATS = {"counts": defaultdict(int), "errors": defaultdict(set)}
 _ER_ARTICLES_CACHE_BY_HOST: dict[str, list] = {}  # cache separado por fuente
+
+# ============== Ventana dinámica según hora Chile ==============
+def _compute_hours_back(now_cl: datetime | None = None) -> int:
+    """
+    08:xx -> 14 horas
+    18:xx -> 10 horas
+    Otros momentos:
+      - AM -> 14h
+      - PM -> 10h
+    Permite override con env var HOURS_BACK_OVERRIDE (int).
+    """
+    override = os.getenv("HOURS_BACK_OVERRIDE", "").strip()
+    if override.isdigit():
+        return max(1, int(override))
+
+    now_cl = now_cl or datetime.now(CL_TZ)
+    hr = now_cl.hour
+    if hr == 8:
+        return 14
+    if hr == 18:
+        return 10
+    return 14 if hr < 12 else 10
 
 # ===================== FETCH: Event Registry (por host) =====================
 def _parse_er_dt_to_iso(dt_str: str) -> str:
@@ -577,7 +592,6 @@ def obtener_noticias() -> list[dict]:
       2) Para cada empresa, filtra y genera ítems:
          - Siempre 1 ítem de tipo "empresa" cuando hay match de empresa.
          - Además, 1 ítem de tipo "industria" POR CADA industria detectada.
-           Es decir, si una nota calza con 3 industrias, se generan 3 ítems industria.
     """
     all_news = []
 
@@ -646,8 +660,8 @@ def obtener_noticias() -> list[dict]:
                     noticia_ind = {
                         **base_item,
                         "id": f"{company_idx}-{item_seq}-I",
-                        "industrias": [ind],     # lista de un solo elemento
-                        "industria": ind,         # string auxiliar para mostrar limpio
+                        "industrias": [ind],
+                        "industria": ind,
                         "es_empresa": False,
                         "es_industria": True,
                         "tipo": "industria",
@@ -669,6 +683,7 @@ def obtener_noticias() -> list[dict]:
         print("[DEBUG] Conteo por fuente:", dict(by_src), flush=True)
 
     return all_news
+
 # ===================== COMPILAR REPORTE =====================
 def compilar_reporte():
     print("📡 Descargando y filtrando noticias...", flush=True)
@@ -779,76 +794,33 @@ def compilar_reporte():
     return "\n".join(texto_lines), "".join(html_parts)
 
 # ===================== ENVIAR MAIL =====================
-def enviar_mail(texto, cuerpo_html, remitente, destinatario, password):
+def enviar_mail(texto, cuerpo_html, remitente, destinatarios: list[str], password):
     msg = MIMEMultipart("alternative")
     msg["Subject"] = _subject_for_today("Reporte de Noticias")
     msg["From"] = remitente
-    msg["To"] = destinatario
+    msg["To"] = ", ".join(destinatarios)
     msg.attach(MIMEText(texto, "plain", "utf-8"))
     msg.attach(MIMEText(cuerpo_html, "html", "utf-8"))
 
     # SMTP seguro (SSL 465). Si prefieres STARTTLS: usa puerto 587 y server.starttls()
     with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
         server.login(remitente, password)
-        server.sendmail(remitente, destinatario, msg.as_string())
+        server.sendmail(remitente, destinatarios, msg.as_string())
     print("📨 Correo enviado con éxito", flush=True)
 
-# ===================== SCHEDULER =====================
-def _parse_daily_time(hhmm: str) -> dtime:
-    hhmm = (hhmm or "").strip()
-    try:
-        hh, mm = hhmm.split(":")
-        return dtime(hour=int(hh), minute=int(mm), tzinfo=CL_TZ)
-    except Exception:
-        raise ValueError("DAILY_SEND_TIME debe tener formato 'HH:MM' en 24h (ej. '08:00').")
-
-def _next_run_datetime(send_time_hhmm: str) -> datetime:
-    """Próxima fecha/hora de ejecución en CL_TZ >= ahora."""
-    target_t = _parse_daily_time(send_time_hhmm)
-    now = datetime.now(CL_TZ)
-    candidate = datetime.combine(now.date(), dtime(target_t.hour, target_t.minute), tzinfo=CL_TZ)
-    if candidate <= now:
-        candidate = candidate + timedelta(days=1)
-    if WEEKDAYS_ONLY:
-        # 0=Lunes ... 6=Domingo
-        while candidate.weekday() >= 5:  # Sáb(5) o Dom(6)
-            candidate = candidate + timedelta(days=1)
-    return candidate
-
-def _sleep_until(dt_target: datetime):
-    """Duerme hasta dt_target (seguro ante reloj del SO)."""
-    while True:
-        now = datetime.now(CL_TZ)
-        remaining = (dt_target - now).total_seconds()
-        if remaining <= 0:
-            return
-        # dormir en tramos para poder interrumpir con Ctrl+C
-        _time.sleep(min(remaining, 60))
-
+# ===================== MAIN =====================
 def run_once():
+    # Ajusta la ventana según hora de Chile
+    global HOURS_BACK
+    HOURS_BACK = _compute_hours_back(datetime.now(CL_TZ))
+    print(f"⏱️ Ventana dinámica seleccionada: últimas {HOURS_BACK} horas (CLT).", flush=True)
+
     # Limpia cachés por si corres muchas veces seguidas
     _ER_ARTICLES_CACHE_BY_HOST.clear()
 
     texto, html_body = compilar_reporte()
-    enviar_mail(texto, html_body, REMITENTE, DESTINATARIO, APP_PASSWORD)
+    enviar_mail(texto, html_body, REMITENTE, RECIPIENTS, APP_PASSWORD)
 
-def run_daily_loop():
-    print(f"⏱️ Envío diario programado a las {DAILY_SEND_TIME} (America/Santiago). "
-          f"{'Sólo L-V.' if WEEKDAYS_ONLY else 'Todos los días.'}", flush=True)
-    while True:
-        nxt = _next_run_datetime(DAILY_SEND_TIME)
-        secs = int((nxt - datetime.now(CL_TZ)).total_seconds())
-        print(f"⏳ Próximo envío: {nxt.strftime('%Y-%m-%d %H:%M:%S %Z')} (en ~{secs} s)", flush=True)
-        _sleep_until(nxt)
-        try:
-            run_once()
-        except Exception as e:
-            print(f"❌ Error en ejecución programada: {e}", flush=True)
-        # continuar al siguiente día automáticamente
-
-# ===================== MAIN =====================
 if __name__ == "__main__":
-    if "--once" in sys.argv:
-        run_once()
-    else:
-        run_daily_loop()
+    # Ejecuta una corrida única. (El agendamiento real lo hace GitHub Actions)
+    run_once()
