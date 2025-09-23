@@ -6,7 +6,7 @@ concurrency:
 
 permissions:
   contents: read
-  actions: write   # requerido para cache/save en schedule
+  actions: write   # necesario para cache/save en schedule
 
 on:
   schedule:
@@ -17,7 +17,6 @@ jobs:
   mailer:
     if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
 
@@ -29,7 +28,7 @@ jobs:
           TODAY=$(TZ=America/Santiago date +%Y-%m-%d)
           T_MORN=$(TZ=America/Santiago date -d "$TODAY 07:30:00" +%s)
           T_AFTER=$(TZ=America/Santiago date -d "$TODAY 17:30:00" +%s)
-          PAD=2100   # 35 min * 60
+          PAD=2100
           in_window () { [ $1 -ge $(( $2 - PAD )) ] && [ $1 -le $(( $2 + PAD )) ]; }
           RUN=no; SLOT=none
           if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
@@ -42,35 +41,47 @@ jobs:
           echo "slot_key=${DATE_CL}-${SLOT}" >> "$GITHUB_OUTPUT"
           echo "run=$RUN" >> "$GITHUB_OUTPUT"
 
-      # Lock: solo permite 1 envío por ventana (en schedule)
+      # Restaura posible lock (solo en schedule)
       - name: Lock restore
-        id: lock_restore
         if: ${{ steps.gate.outputs.run == 'yes' && github.event_name == 'schedule' }}
         uses: actions/cache/restore@v4
         with:
           path: .news-lock
           key: "news-mailer-${{ steps.gate.outputs.slot_key }}"
 
-      - name: Prepare lock dir
-        if: ${{ steps.gate.outputs.run == 'yes' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && steps.lock_restore.outputs.cache-hit != 'true')) }}
+      # Define LOCKED=true/false sin leer outputs de otros steps en los if:
+      - name: Check lock
+        if: ${{ steps.gate.outputs.run == 'yes' }}
+        shell: bash
+        run: |
+          if [ -f .news-lock/lock.txt ]; then
+            echo "LOCKED=true" >> "$GITHUB_ENV"
+          else
+            echo "LOCKED=false" >> "$GITHUB_ENV"
+          fi
+          echo "LOCKED=$LOCKED"
+
+      # Si no hay lock y es schedule, crearlo y guardarlo en cache
+      - name: Prepare lock file
+        if: ${{ steps.gate.outputs.run == 'yes' && github.event_name == 'schedule' && env.LOCKED != 'true' }}
         run: |
           mkdir -p .news-lock
           echo "lock for ${{ steps.gate.outputs.slot_key }}" > .news-lock/lock.txt
 
       - name: Lock save
-        if: ${{ steps.gate.outputs.run == 'yes' && github.event_name == 'schedule' && steps.lock_restore.outputs.cache-hit != 'true' }}
+        if: ${{ steps.gate.outputs.run == 'yes' && github.event_name == 'schedule' && env.LOCKED != 'true' }}
         uses: actions/cache/save@v4
         with:
           path: .news-lock
           key: "news-mailer-${{ steps.gate.outputs.slot_key }}"
 
       - uses: actions/setup-python@v5
-        if: ${{ steps.gate.outputs.run == 'yes' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && steps.lock_restore.outputs.cache-hit != 'true')) }}
+        if: ${{ steps.gate.outputs.run == 'yes' && (github.event_name == 'workflow_dispatch' || env.LOCKED != 'true') }}
         with:
           python-version: '3.11'
 
       - name: Install deps
-        if: ${{ steps.gate.outputs.run == 'yes' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && steps.lock_restore.outputs.cache-hit != 'true')) }}
+        if: ${{ steps.gate.outputs.run == 'yes' && (github.event_name == 'workflow_dispatch' || env.LOCKED != 'true') }}
         run: |
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then
@@ -81,7 +92,7 @@ jobs:
           fi
 
       - name: Run script
-        if: ${{ steps.gate.outputs.run == 'yes' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && steps.lock_restore.outputs.cache-hit != 'true')) }}
+        if: ${{ steps.gate.outputs.run == 'yes' && (github.event_name == 'workflow_dispatch' || env.LOCKED != 'true') }}
         env:
           ER_API_KEY:     ${{ secrets.ER_API_KEY }}
           REMITENTE:      ${{ secrets.REMITENTE }}
@@ -92,12 +103,9 @@ jobs:
         run: python solo_apis.py
 
       - name: Skipped (already sent this window)
-        if: ${{ steps.gate.outputs.run == 'yes' && github.event_name == 'schedule' && steps.lock_restore.outputs.cache-hit == 'true' }}
+        if: ${{ steps.gate.outputs.run == 'yes' && github.event_name == 'schedule' && env.LOCKED == 'true' }}
         run: echo "Lock activo: ${{ steps.gate.outputs.slot_key }}"
 
       - name: Skipped (outside window)
-        if: ${{ steps.gate.outputs.run != 'yes' }}
-        run: echo "Fuera de la ventana"
-      - name: Skipped
         if: ${{ steps.gate.outputs.run != 'yes' }}
         run: echo "Fuera de la ventana"
