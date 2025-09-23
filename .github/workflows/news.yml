@@ -17,7 +17,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Gate por hora Chile con ventana ±7 minutos (08:00 y 14:30)
+      # Gate por hora Chile con ventana ±7 minutos (08:00 y 15:30)
       - name: Gate by Chile time (±7 min)
         id: gate
         shell: bash
@@ -27,7 +27,7 @@ jobs:
           TODAY=$(TZ=America/Santiago date +%Y-%m-%d)
 
           T_MORN=$(TZ=America/Santiago date -d "$TODAY 08:00:00" +%s)
-          T_AFTER=$(TZ=America/Santiago date -d "$TODAY 14:30:00" +%s)
+          T_AFTER=$(TZ=America/Santiago date -d "$TODAY 15:30:00" +%s)
 
           WIN=420  # ±7 minutos (en segundos)
 
@@ -72,6 +72,6 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: python solo_apis.py
 
-      - name: Skipped (outside 08:00±7m / 14:30±7m)
+      - name: Skipped (outside 08:00±7m / 15:30±7m)
         if: ${{ steps.gate.outputs.run != 'yes' }}
         run: echo "Fuera de la ventana; no se ejecuta el script."
