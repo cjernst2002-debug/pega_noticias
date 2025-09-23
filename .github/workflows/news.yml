@@ -4,10 +4,8 @@ concurrency:
   group: news-mailer
   cancel-in-progress: false
 
-# 👉 Permisos necesarios para usar cache en runs por schedule
 permissions:
   contents: read
-  actions: write
 
 on:
   schedule:
@@ -18,93 +16,38 @@ jobs:
   mailer:
     if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
 
-      # Gate por hora Chile con ventana simetrica:
-      #   07:30  => 06:55 .. 08:05   (+/-35)
-      #   17:30  => 16:55 .. 18:05   (+/-35)
-      - name: Gate by Chile time (+/- 35 min)
+      - name: Gate by Chile time (+/-35)
         id: gate
         shell: bash
         run: |
-          echo "Event: $GITHUB_EVENT_NAME"
           NOW_S=$(TZ=America/Santiago date +%s)
           TODAY=$(TZ=America/Santiago date +%Y-%m-%d)
-
           T_MORN=$(TZ=America/Santiago date -d "$TODAY 07:30:00" +%s)
           T_AFTER=$(TZ=America/Santiago date -d "$TODAY 17:30:00" +%s)
-
-          EARLY=2100   # 35 min * 60
-          LATE=2100    # 35 min * 60
-
-          in_window () {
-            local now=$1; local target=$2; local early=$3; local late=$4
-            [ $now -ge $((target - early)) ] && [ $now -le $((target + late)) ]
-          }
-
-          RUN="no"
-          SLOT="none"
-
-          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
-            RUN="yes"
-            SLOT="manual"
-          else
-            if in_window "$NOW_S" "$T_MORN" "$EARLY" "$LATE"; then
-              RUN="yes"; SLOT="morn"
-            elif in_window "$NOW_S" "$T_AFTER" "$EARLY" "$LATE"; then
-              RUN="yes"; SLOT="eve"
-            fi
+          PAD=2100
+          in_window () { [ $1 -ge $(( $2 - PAD )) ] && [ $1 -le $(( $2 + PAD )) ]; }
+          RUN=no
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] || in_window "$NOW_S" "$T_MORN" || in_window "$NOW_S" "$T_AFTER"; then
+            RUN=yes
           fi
-
-          DATE_CL=$(TZ=America/Santiago date +%Y-%m-%d)
-          echo "Chile time now: $(TZ=America/Santiago date +%H:%M:%S)"
-          echo "slot_key=${DATE_CL}-${SLOT}" >> "$GITHUB_OUTPUT"
-          echo "run=${RUN}" >> "$GITHUB_OUTPUT"
-
-      # LOCK: restaurar cache por slot (solo schedule)
-      - name: Lock restore
-        id: lock_restore
-        if: ${{ steps.gate.outputs.run == 'yes' && github.event_name == 'schedule' }}
-        uses: actions/cache/restore@v4
-        with:
-          path: .news-lock
-          key: news-mailer-${{ steps.gate.outputs.slot_key }}
-
-      # Si no hay lock, crearlo
-      - name: Prepare lock
-        if: ${{ steps.gate.outputs.run == 'yes' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && steps.lock_restore.outputs.cache-hit != 'true')) }}
-        run: |
-          mkdir -p .news-lock
-          echo "lock for ${{ steps.gate.outputs.slot_key }} at $(TZ=America/Santiago date -Iseconds)" > .news-lock/lock.txt
-
-      # Guardar lock en cache (solo si era miss y es schedule)
-      - name: Lock save
-        if: ${{ steps.gate.outputs.run == 'yes' && github.event_name == 'schedule' && steps.lock_restore.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@v4
-        with:
-          path: .news-lock
-          key: news-mailer-${{ steps.gate.outputs.slot_key }}
+          echo "run=$RUN" >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-python@v5
-        if: ${{ steps.gate.outputs.run == 'yes' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && steps.lock_restore.outputs.cache-hit != 'true')) }}
+        if: ${{ steps.gate.outputs.run == 'yes' }}
         with:
           python-version: '3.11'
 
       - name: Install deps
-        if: ${{ steps.gate.outputs.run == 'yes' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && steps.lock_restore.outputs.cache-hit != 'true')) }}
+        if: ${{ steps.gate.outputs.run == 'yes' }}
         run: |
           python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then
-            pip install -r requirements.txt
-          else
-            echo "No requirements.txt, installing minimal deps"
-            pip install --no-cache-dir eventregistry openai
-          fi
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; else pip install --no-cache-dir eventregistry openai; fi
 
       - name: Run script
-        if: ${{ steps.gate.outputs.run == 'yes' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && steps.lock_restore.outputs.cache-hit != 'true')) }}
+        if: ${{ steps.gate.outputs.run == 'yes' }}
         env:
           ER_API_KEY:     ${{ secrets.ER_API_KEY }}
           REMITENTE:      ${{ secrets.REMITENTE }}
@@ -114,12 +57,6 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: python solo_apis.py
 
-      - name: Skipped (already sent in this window)
-        if: ${{ steps.gate.outputs.run == 'yes' && github.event_name == 'schedule' && steps.lock_restore.outputs.cache-hit == 'true' }}
-        run: echo "Ya se envio en esta ventana (lock activo: ${{ steps.gate.outputs.slot_key }})."
-
-      - name: Skipped (outside 07:30 +/-35 or 17:30 +/-35)
+      - name: Skipped
         if: ${{ steps.gate.outputs.run != 'yes' }}
-        run: echo "Fuera de la ventana; no se ejecuta el script."
-        if: ${{ steps.gate.outputs.run != 'yes' }}
-        run: echo "Fuera de la ventana; no se ejecuta el script."
+        run: echo "Fuera de la ventana"
