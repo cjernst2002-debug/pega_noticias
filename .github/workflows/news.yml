@@ -2,11 +2,11 @@ name: Chile News Mailer
 
 concurrency:
   group: news-mailer
-  cancel-in-progress: true
+  cancel-in-progress: false   # no cancela si entran dos ticks en la misma ventana
 
 on:
   schedule:
-    - cron: '*/10 * * * *'  # despierta cada 10 minutos (UTC)
+    - cron: '*/5 * * * *'     # despierta cada 5 minutos (UTC)
   workflow_dispatch: {}
 
 jobs:
@@ -17,7 +17,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Gate por hora Chile con ventana ±7 minutos (08:00 y 13:30)
+      # Gate por hora Chile con ventana ±7 minutos (08:00 y 14:30)
       - name: Gate by Chile time (±7 min)
         id: gate
         shell: bash
@@ -27,10 +27,9 @@ jobs:
           TODAY=$(TZ=America/Santiago date +%Y-%m-%d)
 
           T_MORN=$(TZ=America/Santiago date -d "$TODAY 08:00:00" +%s)
-          T_NOON=$(TZ=America/Santiago date -d "$TODAY 13:30:00" +%s)
+          T_AFTER=$(TZ=America/Santiago date -d "$TODAY 14:30:00" +%s)
 
-          # ventana ±7 minutos
-          WIN=420
+          WIN=420  # ±7 minutos (en segundos)
 
           in_window () {
             local now=$1; local target=$2; local win=$3
@@ -40,7 +39,7 @@ jobs:
           RUN="no"
           if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] \
              || in_window "$NOW_S" "$T_MORN" "$WIN" \
-             || in_window "$NOW_S" "$T_NOON" "$WIN"; then
+             || in_window "$NOW_S" "$T_AFTER" "$WIN"; then
             RUN="yes"
           fi
 
@@ -69,10 +68,11 @@ jobs:
           ER_API_KEY:     ${{ secrets.ER_API_KEY }}
           REMITENTE:      ${{ secrets.REMITENTE }}
           DESTINATARIO:   ${{ secrets.DESTINATARIO }}
+          DESTINATARIO2:  ${{ secrets.DESTINATARIO2 }}
           APP_PASSWORD:   ${{ secrets.APP_PASSWORD }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: python solo_apis.py
 
-      - name: Skipped (outside 08:00±7m / 13:30±7m)
+      - name: Skipped (outside 08:00±7m / 14:30±7m)
         if: ${{ steps.gate.outputs.run != 'yes' }}
         run: echo "Fuera de la ventana; no se ejecuta el script."
