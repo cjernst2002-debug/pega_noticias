@@ -6,6 +6,7 @@ concurrency:
 
 permissions:
   contents: read
+  actions: write   # requerido para cache/save en schedule
 
 on:
   schedule:
@@ -16,6 +17,7 @@ jobs:
   mailer:
     if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
 
@@ -27,27 +29,59 @@ jobs:
           TODAY=$(TZ=America/Santiago date +%Y-%m-%d)
           T_MORN=$(TZ=America/Santiago date -d "$TODAY 07:30:00" +%s)
           T_AFTER=$(TZ=America/Santiago date -d "$TODAY 17:30:00" +%s)
-          PAD=2100
+          PAD=2100   # 35 min * 60
           in_window () { [ $1 -ge $(( $2 - PAD )) ] && [ $1 -le $(( $2 + PAD )) ]; }
-          RUN=no
-          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] || in_window "$NOW_S" "$T_MORN" || in_window "$NOW_S" "$T_AFTER"; then
-            RUN=yes
+          RUN=no; SLOT=none
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            RUN=yes; SLOT=manual
+          else
+            if in_window "$NOW_S" "$T_MORN"; then RUN=yes; SLOT=morn; fi
+            if in_window "$NOW_S" "$T_AFTER"; then RUN=yes; SLOT=eve; fi
           fi
+          DATE_CL=$(TZ=America/Santiago date +%Y-%m-%d)
+          echo "slot_key=${DATE_CL}-${SLOT}" >> "$GITHUB_OUTPUT"
           echo "run=$RUN" >> "$GITHUB_OUTPUT"
 
+      # Lock: solo permite 1 envío por ventana (en schedule)
+      - name: Lock restore
+        id: lock_restore
+        if: ${{ steps.gate.outputs.run == 'yes' && github.event_name == 'schedule' }}
+        uses: actions/cache/restore@v4
+        with:
+          path: .news-lock
+          key: "news-mailer-${{ steps.gate.outputs.slot_key }}"
+
+      - name: Prepare lock dir
+        if: ${{ steps.gate.outputs.run == 'yes' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && steps.lock_restore.outputs.cache-hit != 'true')) }}
+        run: |
+          mkdir -p .news-lock
+          echo "lock for ${{ steps.gate.outputs.slot_key }}" > .news-lock/lock.txt
+
+      - name: Lock save
+        if: ${{ steps.gate.outputs.run == 'yes' && github.event_name == 'schedule' && steps.lock_restore.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: .news-lock
+          key: "news-mailer-${{ steps.gate.outputs.slot_key }}"
+
       - uses: actions/setup-python@v5
-        if: ${{ steps.gate.outputs.run == 'yes' }}
+        if: ${{ steps.gate.outputs.run == 'yes' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && steps.lock_restore.outputs.cache-hit != 'true')) }}
         with:
           python-version: '3.11'
 
       - name: Install deps
-        if: ${{ steps.gate.outputs.run == 'yes' }}
+        if: ${{ steps.gate.outputs.run == 'yes' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && steps.lock_restore.outputs.cache-hit != 'true')) }}
         run: |
           python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; else pip install --no-cache-dir eventregistry openai; fi
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          else
+            echo "No requirements.txt, installing minimal deps"
+            pip install --no-cache-dir eventregistry openai
+          fi
 
       - name: Run script
-        if: ${{ steps.gate.outputs.run == 'yes' }}
+        if: ${{ steps.gate.outputs.run == 'yes' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && steps.lock_restore.outputs.cache-hit != 'true')) }}
         env:
           ER_API_KEY:     ${{ secrets.ER_API_KEY }}
           REMITENTE:      ${{ secrets.REMITENTE }}
@@ -57,6 +91,13 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: python solo_apis.py
 
+      - name: Skipped (already sent this window)
+        if: ${{ steps.gate.outputs.run == 'yes' && github.event_name == 'schedule' && steps.lock_restore.outputs.cache-hit == 'true' }}
+        run: echo "Lock activo: ${{ steps.gate.outputs.slot_key }}"
+
+      - name: Skipped (outside window)
+        if: ${{ steps.gate.outputs.run != 'yes' }}
+        run: echo "Fuera de la ventana"
       - name: Skipped
         if: ${{ steps.gate.outputs.run != 'yes' }}
         run: echo "Fuera de la ventana"
