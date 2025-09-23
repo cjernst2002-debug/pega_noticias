@@ -4,6 +4,11 @@ concurrency:
   group: news-mailer
   cancel-in-progress: false
 
+# 👉 Permisos necesarios para usar cache en runs por schedule
+permissions:
+  contents: read
+  actions: write
+
 on:
   schedule:
     - cron: '*/5 * * * *'
@@ -47,11 +52,9 @@ jobs:
             SLOT="manual"
           else
             if in_window "$NOW_S" "$T_MORN" "$EARLY" "$LATE"; then
-              RUN="yes"
-              SLOT="morn"
+              RUN="yes"; SLOT="morn"
             elif in_window "$NOW_S" "$T_AFTER" "$EARLY" "$LATE"; then
-              RUN="yes"
-              SLOT="eve"
+              RUN="yes"; SLOT="eve"
             fi
           fi
 
@@ -89,7 +92,6 @@ jobs:
         with:
           python-version: '3.11'
 
-        # Dependencias
       - name: Install deps
         if: ${{ steps.gate.outputs.run == 'yes' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && steps.lock_restore.outputs.cache-hit != 'true')) }}
         run: |
@@ -107,6 +109,7 @@ jobs:
           ER_API_KEY:     ${{ secrets.ER_API_KEY }}
           REMITENTE:      ${{ secrets.REMITENTE }}
           DESTINATARIO:   ${{ secrets.DESTINATARIO }}
+          DESTINATARIO2:  ${{ secrets.DESTINATARIO2 }}
           APP_PASSWORD:   ${{ secrets.APP_PASSWORD }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: python solo_apis.py
@@ -116,5 +119,7 @@ jobs:
         run: echo "Ya se envio en esta ventana (lock activo: ${{ steps.gate.outputs.slot_key }})."
 
       - name: Skipped (outside 07:30 +/-35 or 17:30 +/-35)
+        if: ${{ steps.gate.outputs.run != 'yes' }}
+        run: echo "Fuera de la ventana; no se ejecuta el script."
         if: ${{ steps.gate.outputs.run != 'yes' }}
         run: echo "Fuera de la ventana; no se ejecuta el script."
