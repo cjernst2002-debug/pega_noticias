@@ -6,22 +6,14 @@ concurrency:
 
 on:
   schedule:
-    # 09:45 Chile (UTC-3 y UTC-4)
-    - cron: '45 12 * * *'
-    - cron: '45 13 * * *'
-    # 18:00 Chile (UTC-3 y UTC-4)
-    - cron: '0 21 * * *'
-    - cron: '0 22 * * *'
-  workflow_dispatch:
-    inputs:
-      force_run:
-        description: 'Forzar ejecución'
-        type: boolean
-        default: false
-      hours_back_override:
-        description: 'Opcional: ventana en horas (p.ej. 6)'
-        type: string
-        default: ''
+    # MAÑANA: 09:45 Chile (verano/invierno)
+    - cron: '45 12 * * *'  # 09:45 CL en UTC-3
+    - cron: '45 13 * * *'  # 09:45 CL en UTC-4
+    # TARDE: 18:00 Chile (verano/invierno)
+    - cron: '0 21 * * *'   # 18:00 CL en UTC-3
+    - cron: '0 22 * * *'   # 18:00 CL en UTC-4
+  # para poder correrlo manualmente cuando quieras
+  workflow_dispatch: {}
 
 jobs:
   mailer:
@@ -30,35 +22,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Decide si corremos: 09:45 o 18:00 en Chile, o si force_run=true (solo en workflow_dispatch)
+      # Gate: sólo continuar si en Chile es 09:45 o 18:00,
+      # o si el evento es manual (workflow_dispatch)
       - name: Gate by Chile time
         id: gate
         run: |
-          echo "event: ${{ github.event_name }}"
+          echo "Event: $GITHUB_EVENT_NAME"
           HOUR_CL=$(TZ=America/Santiago date +%H)
           MIN_CL=$(TZ=America/Santiago date +%M)
           echo "Chile time now: $HOUR_CL:$MIN_CL"
 
           RUN="no"
-          FORCE="0"
-          HOURS_BACK=""
-
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ github.event.inputs.force_run }}" = "true" ]; then
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
             RUN="yes"
-            FORCE="1"
           else
             if { [ "$HOUR_CL" = "09" ] && [ "$MIN_CL" = "45" ]; } || { [ "$HOUR_CL" = "18" ] && [ "$MIN_CL" = "00" ]; }; then
               RUN="yes"
             fi
           fi
 
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            HOURS_BACK="${{ github.event.inputs.hours_back_override }}"
-          fi
-
           echo "run=$RUN" >> $GITHUB_OUTPUT
-          echo "force_run=$FORCE" >> $GITHUB_OUTPUT
-          echo "hours_back=$HOURS_BACK" >> $GITHUB_OUTPUT
 
       - uses: actions/setup-python@v5
         if: steps.gate.outputs.run == 'yes'
@@ -74,18 +57,14 @@ jobs:
       - name: Run script
         if: steps.gate.outputs.run == 'yes'
         env:
-          # Secrets
-          ER_API_KEY: ${{ secrets.ER_API_KEY }}
-          REMITENTE: ${{ secrets.REMITENTE }}
-          DESTINATARIO: ${{ secrets.DESTINATARIO }}
-          DESTINATARIO2: ${{ secrets.DESTINATARIO2 }}
-          APP_PASSWORD: ${{ secrets.APP_PASSWORD }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          # Flags para tu script
-          FORCE_RUN: ${{ steps.gate.outputs.force_run }}
-          HOURS_BACK_OVERRIDE: ${{ steps.gate.outputs.hours_back }}
+          ER_API_KEY:       ${{ secrets.ER_API_KEY }}
+          REMITENTE:        ${{ secrets.REMITENTE }}
+          DESTINATARIO:     ${{ secrets.DESTINATARIO }}
+          DESTINATARIO2:    ${{ secrets.DESTINATARIO2 }}
+          APP_PASSWORD:     ${{ secrets.APP_PASSWORD }}
+          OPENAI_API_KEY:   ${{ secrets.OPENAI_API_KEY }}
         run: python solo_apis.py
 
-      - name: Skipped (not scheduled time)
+      - name: Skipped (not 09:45/18:00 CL)
         if: steps.gate.outputs.run != 'yes'
-        run: echo "⛔ Fuera de 09:45/18:00 CL y sin force_run: no se ejecuta el script."
+        run: echo "⛔ Fuera de 09:45/18:00 CL: no se ejecuta el script."
