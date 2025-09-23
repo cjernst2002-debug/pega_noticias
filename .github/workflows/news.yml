@@ -1,6 +1,6 @@
 name: Chile News Mailer
 
-# Permisos necesarios para usar actions/cache/save
+# Necesario para usar actions/cache/save
 permissions:
   actions: write
   contents: read
@@ -27,6 +27,7 @@ jobs:
         id: gate
         shell: bash
         run: |
+          set -euo pipefail
           NOW_S=$(TZ=America/Santiago date +%s)
           TODAY=$(TZ=America/Santiago date +%Y-%m-%d)
           HNOW=$(TZ=America/Santiago date +%H:%M:%S)
@@ -38,8 +39,7 @@ jobs:
 
           in_window () { [ "$1" -ge $(( $2 - WIN )) ] && [ "$1" -le $(( $2 + WIN )) ]; }
 
-          RUN="no"
-          WINDOW=""
+          RUN="no"; WINDOW=""
           if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
             RUN="yes"; WINDOW="manual"
           elif in_window "$NOW_S" "$T_MORN"; then
@@ -53,72 +53,48 @@ jobs:
           echo "window=$WINDOW" >> "$GITHUB_OUTPUT"
           echo "date=$TODAY"    >> "$GITHUB_OUTPUT"
 
-      # ---------- LOCK: restaurar ----------
-      - name: Restore lock (morning)
-        if: ${{ steps.gate.outputs.run == 'yes' && steps.gate.outputs.window == 'morning' }}
-        id: lock_restore_m
+      # ---------- LOCK: restaurar (único step, dinámico) ----------
+      - name: Restore lock
+        if: ${{ steps.gate.outputs.run == 'yes' && steps.gate.outputs.window != 'manual' }}
+        id: lock_restore
         uses: actions/cache/restore@v4
         with:
-          path: .cache-lock/morning
-          key: mailer-lock-morning-${{ steps.gate.outputs.date }}
+          path: .cache-lock/${{ steps.gate.outputs.window }}
+          key: mailer-lock-${{ steps.gate.outputs.window }}-${{ steps.gate.outputs.date }}
 
-      - name: Restore lock (evening)
-        if: ${{ steps.gate.outputs.run == 'yes' && steps.gate.outputs.window == 'evening' }}
-        id: lock_restore_e
-        uses: actions/cache/restore@v4
-        with:
-          path: .cache-lock/evening
-          key: mailer-lock-evening-${{ steps.gate.outputs.date }}
-
+      # Decidir si correr considerando el lock
       - name: Decide with lock
         id: decide
         shell: bash
         run: |
           RUN="${{ steps.gate.outputs.run }}"
           WIN="${{ steps.gate.outputs.window }}"
-          HIT_M="${{ steps.lock_restore_m.outputs.cache-hit }}"
-          HIT_E="${{ steps.lock_restore_e.outputs.cache-hit }}"
-
+          HIT="${{ steps.lock_restore.outputs.cache-hit }}"
           OK="no"
           if [ "$RUN" = "yes" ]; then
             if [ "$WIN" = "manual" ]; then
-              OK="yes"   # manuales ignoran el lock
-            elif [ "$WIN" = "morning" ] && [ "$HIT_M" != "true" ]; then
-              OK="yes"
-            elif [ "$WIN" = "evening" ] && [ "$HIT_E" != "true" ]; then
-              OK="yes"
+              OK="yes"           # manuales ignoran el lock
+            elif [ "$HIT" != "true" ]; then
+              OK="yes"           # primer tick de la ventana
             fi
           fi
           echo "ok=$OK" >> "$GITHUB_OUTPUT"
 
-      # ---------- LOCK: crear y guardar ----------
-      - name: Create lock file (morning)
-        if: ${{ steps.decide.outputs.ok == 'yes' && steps.gate.outputs.window == 'morning' }}
+      # Crear y guardar lock (bloquea ticks siguientes de la misma ventana)
+      - name: Create lock dir & file
+        if: ${{ steps.decide.outputs.ok == 'yes' && steps.gate.outputs.window != 'manual' }}
         run: |
-          mkdir -p .cache-lock/morning
-          echo "locked at $(date -u)Z" > .cache-lock/morning/LOCK
+          mkdir -p ".cache-lock/${{ steps.gate.outputs.window }}"
+          echo "locked at $(date -u)Z" > ".cache-lock/${{ steps.gate.outputs.window }}/LOCK"
 
-      - name: Create lock file (evening)
-        if: ${{ steps.decide.outputs.ok == 'yes' && steps.gate.outputs.window == 'evening' }}
-        run: |
-          mkdir -p .cache-lock/evening
-          echo "locked at $(date -u)Z" > .cache-lock/evening/LOCK
-
-      - name: Save lock (morning)
-        if: ${{ steps.decide.outputs.ok == 'yes' && steps.gate.outputs.window == 'morning' }}
+      - name: Save lock
+        if: ${{ steps.decide.outputs.ok == 'yes' && steps.gate.outputs.window != 'manual' }}
         uses: actions/cache/save@v4
         with:
-          path: .cache-lock/morning
-          key: mailer-lock-morning-${{ steps.gate.outputs.date }}
+          path: .cache-lock/${{ steps.gate.outputs.window }}
+          key: mailer-lock-${{ steps.gate.outputs.window }}-${{ steps.gate.outputs.date }}
 
-      - name: Save lock (evening)
-        if: ${{ steps.decide.outputs.ok == 'yes' && steps.gate.outputs.window == 'evening' }}
-        uses: actions/cache/save@v4
-        with:
-          path: .cache-lock/evening
-          key: mailer-lock-evening-${{ steps.gate.outputs.date }}
-
-      # ---------- Solo corre si ok == yes ----------
+      # ---------- Sólo corre si ok == yes ----------
       - uses: actions/setup-python@v5
         if: ${{ steps.decide.outputs.ok == 'yes' }}
         with:
