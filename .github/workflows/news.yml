@@ -7,8 +7,8 @@ concurrency:
 on:
   schedule:
     # MAÑANA: 10:25 Chile (verano/invierno)
-    - cron: '25 13 * * *'  # 10:25 CL en UTC-3
-    - cron: '25 14 * * *'  # 10:25 CL en UTC-4
+    - cron: '45 13 * * *'  # 10:25 CL en UTC-3
+    - cron: '45 14 * * *'  # 10:25 CL en UTC-4
     # TARDE: 18:00 Chile (verano/invierno)
     - cron: '0 21 * * *'   # 18:00 CL en UTC-3
     - cron: '0 22 * * *'   # 18:00 CL en UTC-4
@@ -21,7 +21,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Gate: sólo continuar si en Chile es 10:25 o 18:00,
+      # Gate: sólo continuar si en Chile es 10:45 o 18:00,
       # o si el evento es manual (workflow_dispatch)
       - name: Gate by Chile time
         id: gate
@@ -34,7 +34,7 @@ jobs:
 
           RUN="no"
           if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] ||
-             { [ "$HOUR_CL" = "10" ] && [ "$MIN_CL" = "25" ]; } ||
+             { [ "$HOUR_CL" = "10" ] && [ "$MIN_CL" = "45" ]; } ||
              { [ "$HOUR_CL" = "18" ] && [ "$MIN_CL" = "00" ]; }; then
             RUN="yes"
           fi
@@ -63,11 +63,10 @@ jobs:
           ER_API_KEY:       ${{ secrets.ER_API_KEY }}
           REMITENTE:        ${{ secrets.REMITENTE }}
           DESTINATARIO:     ${{ secrets.DESTINATARIO }}
-          DESTINATARIO2:    ${{ secrets.DESTINATARIO2 }}
           APP_PASSWORD:     ${{ secrets.APP_PASSWORD }}
           OPENAI_API_KEY:   ${{ secrets.OPENAI_API_KEY }}
         run: python solo_apis.py
 
-      - name: Skipped (not 10:25/18:00 CL)
+      - name: Skipped (not 10:45/18:00 CL)
         if: ${{ steps.gate.outputs.run != 'yes' }}
-        run: echo "Fuera de 10:25/18:00 CL; no se ejecuta el script."
+        run: echo "Fuera de 10:45/18:00 CL; no se ejecuta el script."
