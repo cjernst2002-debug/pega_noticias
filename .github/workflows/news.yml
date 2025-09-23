@@ -12,8 +12,7 @@ on:
     # TARDE: 18:00 Chile (verano/invierno)
     - cron: '0 21 * * *'   # 18:00 CL en UTC-3
     - cron: '0 22 * * *'   # 18:00 CL en UTC-4
-  # para poder correrlo manualmente cuando quieras
-  workflow_dispatch: {}
+  workflow_dispatch:
 
 jobs:
   mailer:
@@ -26,6 +25,7 @@ jobs:
       # o si el evento es manual (workflow_dispatch)
       - name: Gate by Chile time
         id: gate
+        shell: bash
         run: |
           echo "Event: $GITHUB_EVENT_NAME"
           HOUR_CL=$(TZ=America/Santiago date +%H)
@@ -41,21 +41,26 @@ jobs:
             fi
           fi
 
-          echo "run=$RUN" >> $GITHUB_OUTPUT
+          echo "run=$RUN" >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-python@v5
-        if: steps.gate.outputs.run == 'yes'
+        if: ${{ steps.gate.outputs.run == 'yes' }}
         with:
           python-version: '3.11'
 
       - name: Install deps
-        if: steps.gate.outputs.run == 'yes'
+        if: ${{ steps.gate.outputs.run == 'yes' }}
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          else
+            echo "No hay requirements.txt, instalando mínimos…"
+            pip install --no-cache-dir eventregistry openai
+          fi
 
       - name: Run script
-        if: steps.gate.outputs.run == 'yes'
+        if: ${{ steps.gate.outputs.run == 'yes' }}
         env:
           ER_API_KEY:       ${{ secrets.ER_API_KEY }}
           REMITENTE:        ${{ secrets.REMITENTE }}
@@ -66,5 +71,5 @@ jobs:
         run: python solo_apis.py
 
       - name: Skipped (not 09:45/18:00 CL)
-        if: steps.gate.outputs.run != 'yes'
-        run: echo "⛔ Fuera de 09:45/18:00 CL: no se ejecuta el script."
+        if: ${{ steps.gate.outputs.run != 'yes' }}
+        run: echo "Fuera de 09:45/18:00 CL: no se ejecuta el script."
