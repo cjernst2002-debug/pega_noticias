@@ -2,7 +2,7 @@ name: Chile News Mailer
 
 concurrency:
   group: news-mailer
-  cancel-in-progress: false   # no cancela un job en curso; los siguientes esperan turno
+  cancel-in-progress: false   # no cancela si entran dos ticks en la misma ventana
 
 on:
   schedule:
@@ -17,10 +17,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Gate por hora Chile con ventana simétrica:
-      #   07:30  => 06:55 .. 08:05   (±35)
-      #   17:30  => 16:55 .. 18:05   (±35)
-      - name: Gate by Chile time (±35 min)
+      # Gate por hora Chile con ventana asimétrica:
+      #   07:30  => 07:23 .. 07:42   (-7 / +12)
+      #   17:30  => 17:23 .. 17:42   (-7 / +12)
+      - name: Gate by Chile time (-7 / +12 min)
         id: gate
         shell: bash
         run: |
@@ -31,56 +31,31 @@ jobs:
           T_MORN=$(TZ=America/Santiago date -d "$TODAY 07:30:00" +%s)
           T_AFTER=$(TZ=America/Santiago date -d "$TODAY 17:30:00" +%s)
 
-          EARLY=2100   # 35 min * 60
-          LATE=2100    # 35 min * 60
+          EARLY=420   # 7 min * 60 (antes del objetivo)
+          LATE=720    # 12 min * 60 (después del objetivo)
 
-          in_window () {
+          in_window_asym () {
             local now=$1; local target=$2; local early=$3; local late=$4
             [ $now -ge $((target - early)) ] && [ $now -le $((target + late)) ]
           }
 
           RUN="no"
-          SLOT="none"
-          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] \
+             || in_window_asym "$NOW_S" "$T_MORN" "$EARLY" "$LATE" \
+             || in_window_asym "$NOW_S" "$T_AFTER" "$EARLY" "$LATE"; then
             RUN="yes"
-            SLOT="manual"
-          else
-            if in_window "$NOW_S" "$T_MORN" "$EARLY" "$LATE"; then
-              RUN="yes"
-              SLOT="morn"
-            elif in_window "$NOW_S" "$T_AFTER" "$EARLY" "$LATE"; then
-              RUN="yes"
-              SLOT="eve"
-            fi
           fi
 
-          DATE_CL=$(TZ=America/Santiago date +%Y-%m-%d)
           echo "Chile time now: $(TZ=America/Santiago date +%H:%M:%S)"
-          echo "slot_key=${DATE_CL}-${SLOT}" >> "$GITHUB_OUTPUT"
-          echo "run=${RUN}" >> "$GITHUB_OUTPUT"
-
-      # Lock por ventana (solo en schedule). Si ya existe, se salta el envío.
-      - name: Lock slot cache (restore)
-        id: lock
-        if: ${{ steps.gate.outputs.run == 'yes' && github.event_name == 'schedule' }}
-        uses: actions/cache@v4
-        with:
-          path: .news-lock
-          key: news-mailer-${{ steps.gate.outputs.slot_key }}
-
-      - name: Prepare lock (first run in slot)
-        if: ${{ steps.gate.outputs.run == 'yes' && github.event_name == 'schedule' && steps.lock.outputs.cache-hit != 'true' }}
-        run: |
-          mkdir -p .news-lock
-          echo "lock for ${{ steps.gate.outputs.slot_key }} at $(TZ=America/Santiago date -Iseconds)" > .news-lock/lock.txt
+          echo "run=$RUN" >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-python@v5
-        if: ${{ steps.gate.outputs.run == 'yes' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && steps.lock.outputs.cache-hit != 'true')) }}
+        if: ${{ steps.gate.outputs.run == 'yes' }}
         with:
           python-version: '3.11'
 
       - name: Install deps
-        if: ${{ steps.gate.outputs.run == 'yes' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && steps.lock.outputs.cache-hit != 'true')) }}
+        if: ${{ steps.gate.outputs.run == 'yes' }}
         run: |
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then
@@ -91,7 +66,7 @@ jobs:
           fi
 
       - name: Run script
-        if: ${{ steps.gate.outputs.run == 'yes' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && steps.lock.outputs.cache-hit != 'true')) }}
+        if: ${{ steps.gate.outputs.run == 'yes' }}
         env:
           ER_API_KEY:     ${{ secrets.ER_API_KEY }}
           REMITENTE:      ${{ secrets.REMITENTE }}
@@ -101,10 +76,6 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: python solo_apis.py
 
-      - name: Skipped (already sent in this window)
-        if: ${{ steps.gate.outputs.run == 'yes' && github.event_name == 'schedule' && steps.lock.outputs.cache-hit == 'true' }}
-        run: echo "Ya se envió en esta ventana (lock activo: ${{ steps.gate.outputs.slot_key }})."
-
-      - name: Skipped (outside 07:30 ±35 or 17:30 ±35)
+      - name: Skipped (outside 07:30 -7/+12 or 17:30 -7/+12)
         if: ${{ steps.gate.outputs.run != 'yes' }}
         run: echo "Fuera de la ventana; no se ejecuta el script."
