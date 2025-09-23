@@ -10,7 +10,7 @@ concurrency:
 
 on:
   schedule:
-    - cron: '*/5 * * * *'   # despierta cada 5 min (UTC)
+    - cron: '*/5 * * * *'          # despierta cada 5 minutos (UTC)
   workflow_dispatch: {}
 
 jobs:
@@ -47,62 +47,29 @@ jobs:
           fi
 
           echo "Chile time now: $HNOW"
-          {
-            echo "run=$RUN"
-            echo "window=$WINDOW"
-            echo "date=$TODAY"
-          } >> "$GITHUB_OUTPUT"
+          echo "run=$RUN"       >> "$GITHUB_OUTPUT"
+          echo "window=$WINDOW" >> "$GITHUB_OUTPUT"
+          echo "date=$TODAY"    >> "$GITHUB_OUTPUT"
 
-      # --- LOCK: restaurar ---
+      # --- LOCK: restaurar (solo si no es manual) ---
       - name: Restore lock
+        id: lock
         if: ${{ steps.gate.outputs.run == 'yes' && steps.gate.outputs.window != 'manual' }}
-        id: lock_restore
         uses: actions/cache/restore@v4
         with:
-          path: ".cache-lock/${{ steps.gate.outputs.window }}"
-          key: "mailer-lock-${{ steps.gate.outputs.window }}-${{ steps.gate.outputs.date }}"
+          path: .cache-lock/${{ steps.gate.outputs.window }}
+          key: mailer-lock-${{ steps.gate.outputs.window }}-${{ steps.gate.outputs.date }}
 
-      # Decidir con lock
-      - name: Decide with lock
-        id: decide
-        shell: bash
-        run: |
-          set -euo pipefail
-          RUN='${{ steps.gate.outputs.run }}'
-          WIN='${{ steps.gate.outputs.window }}'
-          HIT="${{ steps.lock_restore.outputs['cache-hit'] }}"
-          OK=no
-          if [ "$RUN" = "yes" ]; then
-            if [ "$WIN" = "manual" ]; then
-              OK=yes
-            elif [ "${HIT:-false}" != "true" ]; then
-              OK=yes
-            fi
-          fi
-          echo "ok=$OK" >> "$GITHUB_OUTPUT"
-
-      # --- LOCK: crear y guardar ---
-      - name: Create lock dir & file
-        if: ${{ steps.decide.outputs.ok == 'yes' && steps.gate.outputs.window != 'manual' }}
-        run: |
-          mkdir -p ".cache-lock/${{ steps.gate.outputs.window }}"
-          echo "locked at $(date -u)Z" > ".cache-lock/${{ steps.gate.outputs.window }}/LOCK"
-
-      - name: Save lock
-        if: ${{ steps.decide.outputs.ok == 'yes' && steps.gate.outputs.window != 'manual' }}
-        uses: actions/cache/save@v4
-        with:
-          path: ".cache-lock/${{ steps.gate.outputs.window }}"
-          key: "mailer-lock-${{ steps.gate.outputs.window }}-${{ steps.gate.outputs.date }}"
-
-      # Solo corre si ok == yes
+      # A partir de aquí solo corremos si:
+      # - gate dijo run == yes
+      # - y (es manual) o (no hay lock aún)
       - uses: actions/setup-python@v5
-        if: ${{ steps.decide.outputs.ok == 'yes' }}
+        if: ${{ steps.gate.outputs.run == 'yes' && (steps.gate.outputs.window == 'manual' || steps.lock.outputs.cache-hit != 'true') }}
         with:
           python-version: '3.11'
 
       - name: Install deps
-        if: ${{ steps.decide.outputs.ok == 'yes' }}
+        if: ${{ steps.gate.outputs.run == 'yes' && (steps.gate.outputs.window == 'manual' || steps.lock.outputs.cache-hit != 'true') }}
         run: |
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then
@@ -113,7 +80,7 @@ jobs:
           fi
 
       - name: Run script
-        if: ${{ steps.decide.outputs.ok == 'yes' }}
+        if: ${{ steps.gate.outputs.run == 'yes' && (steps.gate.outputs.window == 'manual' || steps.lock.outputs.cache-hit != 'true') }}
         env:
           ER_API_KEY:     ${{ secrets.ER_API_KEY }}
           REMITENTE:      ${{ secrets.REMITENTE }}
@@ -123,6 +90,14 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: python solo_apis.py
 
+      # Guardamos lock solo para ventanas programadas (no manual)
+      - name: Save lock
+        if: ${{ steps.gate.outputs.run == 'yes' && steps.gate.outputs.window != 'manual' && steps.lock.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: .cache-lock/${{ steps.gate.outputs.window }}
+          key: mailer-lock-${{ steps.gate.outputs.window }}-${{ steps.gate.outputs.date }}
+
       - name: Skipped (outside window or locked)
-        if: ${{ steps.decide.outputs.ok != 'yes' }}
+        if: ${{ !(steps.gate.outputs.run == 'yes' && (steps.gate.outputs.window == 'manual' || steps.lock.outputs.cache-hit != 'true')) }}
         run: echo "Saltado: fuera de 08:00/18:00 ±35 min o ya hubo un envío en esta ventana."
