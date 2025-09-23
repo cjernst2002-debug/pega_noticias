@@ -11,14 +11,13 @@ on:
 
 jobs:
   mailer:
-    # ignora otros eventos (push/PR)
     if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
 
-      # Gate por hora Chile con ventana ±7 minutos
+      # Gate por hora Chile con ventana ±7 minutos (08:00 y 13:30)
       - name: Gate by Chile time (±7 min)
         id: gate
         shell: bash
@@ -27,11 +26,10 @@ jobs:
           NOW_S=$(TZ=America/Santiago date +%s)
           TODAY=$(TZ=America/Santiago date +%Y-%m-%d)
 
-          # objetivos del día
-          T_MORN=$(TZ=America/Santiago date -d "$TODAY 11:30:00" +%s)
-          T_EVEN=$(TZ=America/Santiago date -d "$TODAY 18:00:00" +%s)
+          T_MORN=$(TZ=America/Santiago date -d "$TODAY 08:00:00" +%s)
+          T_NOON=$(TZ=America/Santiago date -d "$TODAY 13:30:00" +%s)
 
-          # ventana ±7 minutos (420 s)
+          # ventana ±7 minutos
           WIN=420
 
           in_window () {
@@ -42,7 +40,7 @@ jobs:
           RUN="no"
           if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] \
              || in_window "$NOW_S" "$T_MORN" "$WIN" \
-             || in_window "$NOW_S" "$T_EVEN" "$WIN"; then
+             || in_window "$NOW_S" "$T_NOON" "$WIN"; then
             RUN="yes"
           fi
 
@@ -71,11 +69,10 @@ jobs:
           ER_API_KEY:     ${{ secrets.ER_API_KEY }}
           REMITENTE:      ${{ secrets.REMITENTE }}
           DESTINATARIO:   ${{ secrets.DESTINATARIO }}
-          DESTINATARIO2:  ${{ secrets.DESTINATARIO2 }}
           APP_PASSWORD:   ${{ secrets.APP_PASSWORD }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: python solo_apis.py
 
-      - name: Skipped (outside 11:30±7m / 18:00±7m)
+      - name: Skipped (outside 08:00±7m / 13:30±7m)
         if: ${{ steps.gate.outputs.run != 'yes' }}
         run: echo "Fuera de la ventana; no se ejecuta el script."
