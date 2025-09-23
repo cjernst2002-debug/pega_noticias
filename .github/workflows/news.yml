@@ -6,24 +6,19 @@ concurrency:
 
 on:
   schedule:
-    # MAÑANA: 10:45 Chile (verano/invierno)
-    - cron: '45 13 * * *'  # 10:45 CL cuando Chile está en UTC-3
-    - cron: '45 14 * * *'  # 10:45 CL cuando Chile está en UTC-4
-    # TARDE: 18:00 Chile (verano/invierno)
-    - cron: '0 21 * * *'   # 18:00 CL en UTC-3
-    - cron: '0 22 * * *'   # 18:00 CL en UTC-4
+    - cron: '*/10 * * * *'  # despierta cada 10 minutos (UTC)
   workflow_dispatch: {}
 
 jobs:
   mailer:
-    # evita runs por push/PR
+    # ignora otros eventos (push/PR)
     if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
 
-      # Gate: permite manual o si la hora CL cae dentro de una ventana ±7 min
+      # Gate por hora Chile con ventana ±7 minutos
       - name: Gate by Chile time (±7 min)
         id: gate
         shell: bash
@@ -32,11 +27,11 @@ jobs:
           NOW_S=$(TZ=America/Santiago date +%s)
           TODAY=$(TZ=America/Santiago date +%Y-%m-%d)
 
-          # Objetivos del día
-          T_MORN=$(TZ=America/Santiago date -d "$TODAY 10:45:00" +%s)
+          # objetivos del día
+          T_MORN=$(TZ=America/Santiago date -d "$TODAY 11:30:00" +%s)
           T_EVEN=$(TZ=America/Santiago date -d "$TODAY 18:00:00" +%s)
 
-          # Ventana ±7 min (420 s)
+          # ventana ±7 minutos (420 s)
           WIN=420
 
           in_window () {
@@ -81,6 +76,6 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: python solo_apis.py
 
-      - name: Skipped (outside 10:45/18:00 CL window)
+      - name: Skipped (outside 11:30±7m / 18:00±7m)
         if: ${{ steps.gate.outputs.run != 'yes' }}
-        run: echo "Fuera de la ventana horaria; no se ejecuta el script."
+        run: echo "Fuera de la ventana; no se ejecuta el script."
