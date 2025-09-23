@@ -6,13 +6,13 @@ concurrency:
 
 on:
   schedule:
-    # MAÑANA: 09:45 Chile (verano/invierno)
-    - cron: '45 12 * * *'  # 09:45 CL en UTC-3
-    - cron: '45 13 * * *'  # 09:45 CL en UTC-4
+    # MAÑANA: 10:25 Chile (verano/invierno)
+    - cron: '25 13 * * *'  # 10:25 CL en UTC-3
+    - cron: '25 14 * * *'  # 10:25 CL en UTC-4
     # TARDE: 18:00 Chile (verano/invierno)
     - cron: '0 21 * * *'   # 18:00 CL en UTC-3
     - cron: '0 22 * * *'   # 18:00 CL en UTC-4
-  workflow_dispatch:
+  workflow_dispatch: {}
 
 jobs:
   mailer:
@@ -21,7 +21,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Gate: sólo continuar si en Chile es 09:45 o 18:00,
+      # Gate: sólo continuar si en Chile es 10:25 o 18:00,
       # o si el evento es manual (workflow_dispatch)
       - name: Gate by Chile time
         id: gate
@@ -33,12 +33,10 @@ jobs:
           echo "Chile time now: $HOUR_CL:$MIN_CL"
 
           RUN="no"
-          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] ||
+             { [ "$HOUR_CL" = "10" ] && [ "$MIN_CL" = "25" ]; } ||
+             { [ "$HOUR_CL" = "18" ] && [ "$MIN_CL" = "00" ]; }; then
             RUN="yes"
-          else
-            if { [ "$HOUR_CL" = "09" ] && [ "$MIN_CL" = "45" ]; } || { [ "$HOUR_CL" = "18" ] && [ "$MIN_CL" = "00" ]; }; then
-              RUN="yes"
-            fi
           fi
 
           echo "run=$RUN" >> "$GITHUB_OUTPUT"
@@ -55,7 +53,7 @@ jobs:
           if [ -f requirements.txt ]; then
             pip install -r requirements.txt
           else
-            echo "No hay requirements.txt, instalando mínimos…"
+            echo "No requirements.txt, installing minimal deps"
             pip install --no-cache-dir eventregistry openai
           fi
 
@@ -70,6 +68,6 @@ jobs:
           OPENAI_API_KEY:   ${{ secrets.OPENAI_API_KEY }}
         run: python solo_apis.py
 
-      - name: Skipped (not 09:45/18:00 CL)
+      - name: Skipped (not 10:25/18:00 CL)
         if: ${{ steps.gate.outputs.run != 'yes' }}
-        run: echo "Fuera de 09:45/18:00 CL: no se ejecuta el script."
+        run: echo "Fuera de 10:25/18:00 CL; no se ejecuta el script."
