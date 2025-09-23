@@ -1,5 +1,10 @@
 name: Chile News Mailer
 
+# Permisos necesarios para usar actions/cache/save
+permissions:
+  actions: write
+  contents: read
+
 concurrency:
   group: news-mailer
   cancel-in-progress: false   # no cancela si entran dos ticks en la misma ventana
@@ -17,7 +22,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Gate: 08:00 y 18:00 Chile con ventana ±35 min, y salida de ventana activa
+      # Gate: 08:00 y 18:00 Chile con ventana ±35 minutos
       - name: Gate by Chile time (±35 min)
         id: gate
         shell: bash
@@ -36,14 +41,11 @@ jobs:
           RUN="no"
           WINDOW=""
           if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
-            RUN="yes"       # los manuales pasan siempre
-            WINDOW="manual"
+            RUN="yes"; WINDOW="manual"
           elif in_window "$NOW_S" "$T_MORN"; then
-            RUN="yes"
-            WINDOW="morning"
+            RUN="yes"; WINDOW="morning"
           elif in_window "$NOW_S" "$T_EVEN"; then
-            RUN="yes"
-            WINDOW="evening"
+            RUN="yes"; WINDOW="evening"
           fi
 
           echo "Chile time now: $HNOW (America/Santiago)"
@@ -51,7 +53,7 @@ jobs:
           echo "window=$WINDOW" >> "$GITHUB_OUTPUT"
           echo "date=$TODAY"    >> "$GITHUB_OUTPUT"
 
-      # ===== LOCK: restaurar lock de la ventana activa =====
+      # ---------- LOCK: restaurar ----------
       - name: Restore lock (morning)
         if: ${{ steps.gate.outputs.run == 'yes' && steps.gate.outputs.window == 'morning' }}
         id: lock_restore_m
@@ -68,7 +70,6 @@ jobs:
           path: .cache-lock/evening
           key: mailer-lock-evening-${{ steps.gate.outputs.date }}
 
-      # Decidir considerando el lock
       - name: Decide with lock
         id: decide
         shell: bash
@@ -77,10 +78,11 @@ jobs:
           WIN="${{ steps.gate.outputs.window }}"
           HIT_M="${{ steps.lock_restore_m.outputs.cache-hit }}"
           HIT_E="${{ steps.lock_restore_e.outputs.cache-hit }}"
+
           OK="no"
           if [ "$RUN" = "yes" ]; then
             if [ "$WIN" = "manual" ]; then
-              OK="yes"   # manual siempre corre
+              OK="yes"   # manuales ignoran el lock
             elif [ "$WIN" = "morning" ] && [ "$HIT_M" != "true" ]; then
               OK="yes"
             elif [ "$WIN" = "evening" ] && [ "$HIT_E" != "true" ]; then
@@ -89,7 +91,7 @@ jobs:
           fi
           echo "ok=$OK" >> "$GITHUB_OUTPUT"
 
-      # Crear lock y guardarlo de inmediato (para bloquear ticks siguientes de la misma ventana)
+      # ---------- LOCK: crear y guardar ----------
       - name: Create lock file (morning)
         if: ${{ steps.decide.outputs.ok == 'yes' && steps.gate.outputs.window == 'morning' }}
         run: |
@@ -116,7 +118,7 @@ jobs:
           path: .cache-lock/evening
           key: mailer-lock-evening-${{ steps.gate.outputs.date }}
 
-      # ======= Solo corre si ok == yes =======
+      # ---------- Solo corre si ok == yes ----------
       - uses: actions/setup-python@v5
         if: ${{ steps.decide.outputs.ok == 'yes' }}
         with:
