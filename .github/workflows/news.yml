@@ -2,7 +2,7 @@ name: Chile News Mailer
 
 concurrency:
   group: news-mailer
-  cancel-in-progress: false   # no cancela un job en curso; los siguientes esperan turno
+  cancel-in-progress: false   # no cancela si entran dos ticks en la misma ventana
 
 on:
   schedule:
@@ -40,47 +40,22 @@ jobs:
           }
 
           RUN="no"
-          SLOT="none"
-          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] \
+             || in_window "$NOW_S" "$T_MORN" "$EARLY" "$LATE" \
+             || in_window "$NOW_S" "$T_AFTER" "$EARLY" "$LATE"; then
             RUN="yes"
-            SLOT="manual"
-          else
-            if in_window "$NOW_S" "$T_MORN" "$EARLY" "$LATE"; then
-              RUN="yes"
-              SLOT="morn"
-            elif in_window "$NOW_S" "$T_AFTER" "$EARLY" "$LATE"; then
-              RUN="yes"
-              SLOT="eve"
-            fi
           fi
 
-          DATE_CL=$(TZ=America/Santiago date +%Y-%m-%d)
           echo "Chile time now: $(TZ=America/Santiago date +%H:%M:%S)"
-          echo "slot_key=${DATE_CL}-${SLOT}" >> "$GITHUB_OUTPUT"
-          echo "run=${RUN}" >> "$GITHUB_OUTPUT"
-
-      # Lock por ventana (solo en schedule). Si ya existe, se salta el envío.
-      - name: Lock slot cache (restore)
-        id: lock
-        if: ${{ steps.gate.outputs.run == 'yes' && github.event_name == 'schedule' }}
-        uses: actions/cache@v4
-        with:
-          path: .news-lock
-          key: news-mailer-${{ steps.gate.outputs.slot_key }}
-
-      - name: Prepare lock (first run in slot)
-        if: ${{ steps.gate.outputs.run == 'yes' && github.event_name == 'schedule' && steps.lock.outputs.cache-hit != 'true' }}
-        run: |
-          mkdir -p .news-lock
-          echo "lock for ${{ steps.gate.outputs.slot_key }} at $(TZ=America/Santiago date -Iseconds)" > .news-lock/lock.txt
+          echo "run=$RUN" >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-python@v5
-        if: ${{ steps.gate.outputs.run == 'yes' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && steps.lock.outputs.cache-hit != 'true')) }}
+        if: ${{ steps.gate.outputs.run == 'yes' }}
         with:
           python-version: '3.11'
 
       - name: Install deps
-        if: ${{ steps.gate.outputs.run == 'yes' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && steps.lock.outputs.cache-hit != 'true')) }}
+        if: ${{ steps.gate.outputs.run == 'yes' }}
         run: |
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then
@@ -91,7 +66,7 @@ jobs:
           fi
 
       - name: Run script
-        if: ${{ steps.gate.outputs.run == 'yes' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && steps.lock.outputs.cache-hit != 'true')) }}
+        if: ${{ steps.gate.outputs.run == 'yes' }}
         env:
           ER_API_KEY:     ${{ secrets.ER_API_KEY }}
           REMITENTE:      ${{ secrets.REMITENTE }}
@@ -99,10 +74,6 @@ jobs:
           APP_PASSWORD:   ${{ secrets.APP_PASSWORD }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: python solo_apis.py
-
-      - name: Skipped (already sent in this window)
-        if: ${{ steps.gate.outputs.run == 'yes' && github.event_name == 'schedule' && steps.lock.outputs.cache-hit == 'true' }}
-        run: echo "Ya se envió en esta ventana (lock activo: ${{ steps.gate.outputs.slot_key }})."
 
       - name: Skipped (outside 07:30 ±35 or 17:30 ±35)
         if: ${{ steps.gate.outputs.run != 'yes' }}
