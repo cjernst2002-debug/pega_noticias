@@ -1,22 +1,32 @@
 name: Chile News Mailer
 
+concurrency:
+  group: news-mailer
+  cancel-in-progress: true
+
 on:
+  schedule:
+    # MAÑANA (Chile) — 09:45 CL
+    - cron: '45 12 * * *'  # 09:45 CL cuando Chile está en UTC-3 (verano)
+    - cron: '45 13 * * *'  # 09:45 CL cuando Chile está en UTC-4 (invierno)
+    # TARDE (Chile) — 18:00 CL
+    - cron: '0 21 * * *'   # 18:00 CL (UTC-3)
+    - cron: '0 22 * * *'   # 18:00 CL (UTC-4)
   workflow_dispatch:
     inputs:
-      force:
-        description: "Ejecutar ahora mismo"
+      force_run:
+        description: 'Forzar ejecución aunque no sea exactamente 09:45/18:00 CL'
         required: false
         type: boolean
         default: false
-  schedule:
-    - cron: "0 * * * *"   # corre cada hora en UTC
-
-concurrency:
-  group: newsjob
-  cancel-in-progress: true
+      hours_back_override:
+        description: 'Opcional: forzar ventana (número de horas, p.ej. 6)'
+        required: false
+        type: string
+        default: ''
 
 jobs:
-  run:
+  mailer:
     runs-on: ubuntu-latest
     env:
       ER_API_KEY: ${{ secrets.ER_API_KEY }}
@@ -24,47 +34,45 @@ jobs:
       DESTINATARIO: ${{ secrets.DESTINATARIO }}
       DESTINATARIO2: ${{ secrets.DESTINATARIO2 }}
       APP_PASSWORD: ${{ secrets.APP_PASSWORD }}
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      FORCE_RUN: ${{ github.event.inputs.force }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}  # deja vacío si no usas IA
+      HOURS_BACK_OVERRIDE: ${{ inputs.hours_back_override }}
 
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      # Solo continúa a las 08:00 o 18:00 Chile, o si lo forzaste manualmente
+      # Gate: solo corre si en Chile es 09:45 o 18:00 exacto (o si force_run=true)
       - name: Gate by Chile time
         id: gate
-        shell: bash
         run: |
-          if [[ "${FORCE_RUN}" == "true" ]]; then
-            echo "run=true" >> "$GITHUB_OUTPUT"
+          FORCE="${{ inputs.force_run }}"
+          HOUR_CL=$(TZ=America/Santiago date +%H)
+          MIN_CL=$(TZ=America/Santiago date +%M)
+          echo "Hora Chile: $HOUR_CL:$MIN_CL"
+          if [ "$FORCE" = "true" ]; then
+            echo "run=yes" >> $GITHUB_OUTPUT
             exit 0
           fi
-          NOW_CL=$(TZ=America/Santiago date +'%H:%M')
-          echo "Hora Chile ahora: ${NOW_CL}"
-          if [[ "${NOW_CL}" == "08:00" || "${NOW_CL}" == "18:00" ]]; then
-            echo "run=true" >> "$GITHUB_OUTPUT"
+          if { [ "$HOUR_CL" = "09" ] && [ "$MIN_CL" = "45" ]; } || { [ "$HOUR_CL" = "18" ] && [ "$MIN_CL" = "00" ]; }; then
+            echo "run=yes" >> $GITHUB_OUTPUT
           else
-            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "run=no" >> $GITHUB_OUTPUT
           fi
 
-      - name: Setup Python
-        if: steps.gate.outputs.run == 'true'
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
+        if: steps.gate.outputs.run == 'yes'
         with:
-          python-version: "3.11"
+          python-version: '3.11'
 
-      - name: Install dependencies
-        if: steps.gate.outputs.run == 'true'
+      - name: Install deps
+        if: steps.gate.outputs.run == 'yes'
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run job
-        if: steps.gate.outputs.run == 'true'
-        run: |
-          python solo_apis.py --once
+      - name: Run script
+        if: steps.gate.outputs.run == 'yes'
+        run: python solo_apis.py
 
-      - name: Not scheduled time
-        if: steps.gate.outputs.run != 'true'
-        run: echo "No es 08:00/18:00 America/Santiago. Se omite."
+      - name: Skipped (not 09:45/18:00 CL)
+        if: steps.gate.outputs.run != 'yes'
+        run: echo "⛔ Fuera de 09:45/18:00 CL y sin force_run: no se ejecuta el script."
