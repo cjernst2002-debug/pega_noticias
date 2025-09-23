@@ -6,9 +6,9 @@ concurrency:
 
 on:
   schedule:
-    # MAÑANA: 10:25 Chile (verano/invierno)
-    - cron: '45 13 * * *'  # 10:25 CL en UTC-3
-    - cron: '45 14 * * *'  # 10:25 CL en UTC-4
+    # MAÑANA: 10:45 Chile (verano/invierno)
+    - cron: '45 13 * * *'  # 10:45 CL cuando Chile está en UTC-3
+    - cron: '45 14 * * *'  # 10:45 CL cuando Chile está en UTC-4
     # TARDE: 18:00 Chile (verano/invierno)
     - cron: '0 21 * * *'   # 18:00 CL en UTC-3
     - cron: '0 22 * * *'   # 18:00 CL en UTC-4
@@ -16,29 +16,42 @@ on:
 
 jobs:
   mailer:
+    # evita runs por push/PR
+    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
 
-      # Gate: sólo continuar si en Chile es 10:45 o 18:00,
-      # o si el evento es manual (workflow_dispatch)
-      - name: Gate by Chile time
+      # Gate: permite manual o si la hora CL cae dentro de una ventana ±7 min
+      - name: Gate by Chile time (±7 min)
         id: gate
         shell: bash
         run: |
           echo "Event: $GITHUB_EVENT_NAME"
-          HOUR_CL=$(TZ=America/Santiago date +%H)
-          MIN_CL=$(TZ=America/Santiago date +%M)
-          echo "Chile time now: $HOUR_CL:$MIN_CL"
+          NOW_S=$(TZ=America/Santiago date +%s)
+          TODAY=$(TZ=America/Santiago date +%Y-%m-%d)
+
+          # Objetivos del día
+          T_MORN=$(TZ=America/Santiago date -d "$TODAY 10:45:00" +%s)
+          T_EVEN=$(TZ=America/Santiago date -d "$TODAY 18:00:00" +%s)
+
+          # Ventana ±7 min (420 s)
+          WIN=420
+
+          in_window () {
+            local now=$1; local target=$2; local win=$3
+            [ $now -ge $((target - win)) ] && [ $now -le $((target + win)) ]
+          }
 
           RUN="no"
-          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] ||
-             { [ "$HOUR_CL" = "10" ] && [ "$MIN_CL" = "45" ]; } ||
-             { [ "$HOUR_CL" = "18" ] && [ "$MIN_CL" = "00" ]; }; then
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] \
+             || in_window "$NOW_S" "$T_MORN" "$WIN" \
+             || in_window "$NOW_S" "$T_EVEN" "$WIN"; then
             RUN="yes"
           fi
 
+          echo "Chile time now: $(TZ=America/Santiago date +%H:%M:%S)"
           echo "run=$RUN" >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-python@v5
@@ -60,13 +73,14 @@ jobs:
       - name: Run script
         if: ${{ steps.gate.outputs.run == 'yes' }}
         env:
-          ER_API_KEY:       ${{ secrets.ER_API_KEY }}
-          REMITENTE:        ${{ secrets.REMITENTE }}
-          DESTINATARIO:     ${{ secrets.DESTINATARIO }}
-          APP_PASSWORD:     ${{ secrets.APP_PASSWORD }}
-          OPENAI_API_KEY:   ${{ secrets.OPENAI_API_KEY }}
+          ER_API_KEY:     ${{ secrets.ER_API_KEY }}
+          REMITENTE:      ${{ secrets.REMITENTE }}
+          DESTINATARIO:   ${{ secrets.DESTINATARIO }}
+          DESTINATARIO2:  ${{ secrets.DESTINATARIO2 }}
+          APP_PASSWORD:   ${{ secrets.APP_PASSWORD }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: python solo_apis.py
 
-      - name: Skipped (not 10:45/18:00 CL)
+      - name: Skipped (outside 10:45/18:00 CL window)
         if: ${{ steps.gate.outputs.run != 'yes' }}
-        run: echo "Fuera de 10:45/18:00 CL; no se ejecuta el script."
+        run: echo "Fuera de la ventana horaria; no se ejecuta el script."
