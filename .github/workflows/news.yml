@@ -91,6 +91,7 @@ jobs:
           ER_API_KEY:     ${{ secrets.ER_API_KEY }}
           REMITENTE:      ${{ secrets.REMITENTE }}
           DESTINATARIO:   ${{ secrets.DESTINATARIO }}
+          DESTINATARIO2:    ${{ secrets.DESTINATARIO2 }}
           APP_PASSWORD:   ${{ secrets.APP_PASSWORD }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
