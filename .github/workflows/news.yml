@@ -2,7 +2,7 @@ name: Chile News Mailer
 
 concurrency:
   group: news-mailer
-  cancel-in-progress: false   # no cancela si entran dos ticks en la misma ventana
+  cancel-in-progress: false  # no cancela si entran dos ticks en la misma ventana
 
 on:
   schedule:
@@ -17,9 +17,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Gate por hora Chile con ventana simétrica:
-      #   07:30  => 06:55 .. 08:05   (±35)
-      #   17:30  => 16:55 .. 18:05   (±35)
+      # Gate por hora Chile con ventana ±35 min (07:30 y 17:30 CL)
       - name: Gate by Chile time (±35 min)
         id: gate
         shell: bash
@@ -27,6 +25,7 @@ jobs:
           echo "Event: $GITHUB_EVENT_NAME"
           NOW_S=$(TZ=America/Santiago date +%s)
           TODAY=$(TZ=America/Santiago date +%Y-%m-%d)
+          HOUR=$(TZ=America/Santiago date +%H)
 
           T_MORN=$(TZ=America/Santiago date -d "$TODAY 07:30:00" +%s)
           T_AFTER=$(TZ=America/Santiago date -d "$TODAY 17:30:00" +%s)
@@ -40,22 +39,43 @@ jobs:
           }
 
           RUN="no"
-          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] \
-             || in_window "$NOW_S" "$T_MORN" "$EARLY" "$LATE" \
-             || in_window "$NOW_S" "$T_AFTER" "$EARLY" "$LATE"; then
-            RUN="yes"
+          WINDOW_TAG="none"
+          if in_window "$NOW_S" "$T_MORN" "$EARLY" "$LATE"; then
+            RUN="yes"; WINDOW_TAG="am"
+          elif in_window "$NOW_S" "$T_AFTER" "$EARLY" "$LATE"; then
+            RUN="yes"; WINDOW_TAG="pm"
           fi
 
+          # Si es manual, forzamos
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            RUN="yes"
+            # Etiqueta según hora para no chocar con el de la mañana
+            if [ "$WINDOW_TAG" = "none" ]; then
+              if [ "$HOUR" -lt 12 ]; then WINDOW_TAG="am"; else WINDOW_TAG="pm"; fi
+            fi
+          fi
+
+          WINDOW_KEY="$(TZ=America/Santiago date +%Y-%m-%d)-${WINDOW_TAG}"
           echo "Chile time now: $(TZ=America/Santiago date +%H:%M:%S)"
           echo "run=$RUN" >> "$GITHUB_OUTPUT"
+          echo "window_key=$WINDOW_KEY" >> "$GITHUB_OUTPUT"
+
+      # LOCK: usa cache como candado por ventana (am/pm de la fecha CL)
+      - name: Acquire window lock
+        if: ${{ steps.gate.outputs.run == 'yes' }}
+        id: lock
+        uses: actions/cache@v4
+        with:
+          path: .window-lock
+          key: news-mailer-${{ steps.gate.outputs.window_key }}
 
       - uses: actions/setup-python@v5
-        if: ${{ steps.gate.outputs.run == 'yes' }}
+        if: ${{ steps.gate.outputs.run == 'yes' && steps.lock.outputs.cache-hit != 'true' }}
         with:
           python-version: '3.11'
 
       - name: Install deps
-        if: ${{ steps.gate.outputs.run == 'yes' }}
+        if: ${{ steps.gate.outputs.run == 'yes' && steps.lock.outputs.cache-hit != 'true' }}
         run: |
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then
@@ -66,7 +86,7 @@ jobs:
           fi
 
       - name: Run script
-        if: ${{ steps.gate.outputs.run == 'yes' }}
+        if: ${{ steps.gate.outputs.run == 'yes' && steps.lock.outputs.cache-hit != 'true' }}
         env:
           ER_API_KEY:     ${{ secrets.ER_API_KEY }}
           REMITENTE:      ${{ secrets.REMITENTE }}
@@ -74,8 +94,14 @@ jobs:
           DESTINATARIO2:  ${{ secrets.DESTINATARIO2 }}
           APP_PASSWORD:   ${{ secrets.APP_PASSWORD }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: python solo_apis.py
+        run: |
+          mkdir -p .window-lock
+          python solo_apis.py
 
-      - name: Skipped (outside 07:30 ±35 or 17:30 ±35)
+      - name: Skipped (already sent this window)
+        if: ${{ steps.gate.outputs.run == 'yes' && steps.lock.outputs.cache-hit == 'true' }}
+        run: echo "Ya se envió en esta ventana (${{ steps.gate.outputs.window_key }})."
+
+      - name: Skipped (outside windows)
         if: ${{ steps.gate.outputs.run != 'yes' }}
         run: echo "Fuera de la ventana; no se ejecuta el script."
