@@ -17,7 +17,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Gate por hora Chile con ventana ±30 min (11:30 y 17:30 CL)
+      # Gate por hora Chile con ventana ±30 min (07:30 y 17:30 CL)
       - name: Gate by Chile time (±30 min)
         id: gate
         shell: bash
@@ -27,7 +27,7 @@ jobs:
           TODAY=$(TZ=America/Santiago date +%Y-%m-%d)
           HOUR=$(TZ=America/Santiago date +%H)
 
-          T_MORN=$(TZ=America/Santiago date -d "$TODAY 11:30:00" +%s)
+          T_MORN=$(TZ=America/Santiago date -d "$TODAY 07:30:00" +%s)
           T_AFTER=$(TZ=America/Santiago date -d "$TODAY 17:30:00" +%s)
 
           EARLY=1800   # 30 min * 60
