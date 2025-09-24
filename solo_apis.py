@@ -37,7 +37,7 @@ DOMAIN_DISPLAY = {
 
 # Límite por empresa y ventana
 DOMAIN_LIMIT = 100
-HOURS_BACK = 24  # será sobrescrito dinámicamente en run_once()
+HOURS_BACK: float = 24.0  # será sobrescrito dinámicamente en run_once()
 
 # Cantidad máxima a pedirle a ER por fuente
 ER_MAX_ITEMS_RAW = 1000  # ↑ techo alto para no cortar recall
@@ -159,7 +159,7 @@ EMPRESA_ALIASES = {
 # ===================== INDUSTRIAS (PEGA TUS LISTAS) =====================
 INDUSTRIA_MUST_MATCH = False
 INDUSTRIA_KEYWORDS = {
-    "bancaria": [
+    "Bancaria": [
         "hecho esencial cmf","resultados trimestrales","resultados 2t25","utilidad neta",
         "roe","margen de interes","nim","provisiones","cartera vencida","morosidad 90 dias",
         "colocaciones","aumento de capital","dividendo","colocacion de bonos","bono subordinado",
@@ -167,7 +167,7 @@ INDUSTRIA_KEYWORDS = {
         "fusion bancaria","adquisicion banco","portabilidad financiera","basilea iii",
         "indice de capital","sancion cmf","ciberataque bancario","plan estrategico banco"
     ],
-    "energia": [
+    "Energia": [
         "licitacion de suministro","adjudicacion suministro","ppa","precio nudo","precio spot",
         "coordinador electrico nacional","cen","declaracion de indisponibilidad","mantenimiento programado",
         "curtailment","congestion","bess","almacenamiento de baterias","linea 220 kv","linea 500 kv",
@@ -176,7 +176,7 @@ INDUSTRIA_KEYWORDS = {
         "tarifa de distribucion","vad","netbilling","plan de expansion de transmision","eia ingresado",
         "rca aprobada","resolucion sea"
     ],
-    "mineria": [
+    "Mineria": [
         "eia ingresado","rca aprobada","sernageomin","cochilco","estudio de prefactibilidad",
         "estudio de factibilidad","capex minero","plan minero","produccion de cobre","produccion de litio",
         "catodos","concentrado","contrato offtake","oferta vinculante","planta desaladora","relaves",
@@ -184,35 +184,35 @@ INDUSTRIA_KEYWORDS = {
         "royalty minero","plan de cierre","permisos sectoriales","inicio de construccion",
         "comisionamiento","mou con codelco","joint venture minero","ppa para faena"
     ],
-    "retail": [
+    "Retail": [
         "resultados 2t25","resultados trimestrales","ventas mismas tiendas","same store sales","sss",
         "ebitda retail","margen bruto","inventarios","apertura de tienda","cierre de tienda",
         "reorganizacion judicial","centro de distribucion","omnicanalidad","ecommerce","marketplace",
         "programa de fidelizacion","cyberday","black friday","ticket promedio","trafico en tiendas",
         "capex de aperturas","guidance de ventas","acuerdo con proveedor"
     ],
-    "inmobiliario": [
+    "Inmobiliario": [
         "preventas","venta en verde","permiso de edificacion","recepcion final","multifamily",
         "build to rent","btr","arriendo residencial","vacancia residencial","absorcion","stock de viviendas",
         "uf m2","tasacion","paralizacion de proyecto","financiamiento hipotecario","alza tasas hipotecarias",
         "subsidio ds19","costo de construccion","plan maestro","cambio de uso de suelo","loteo",
         "plan regulador","joint venture inmobiliario"
     ],
-    "construccion": [
+    "Construccion": [
         "licitacion mop","adjudicacion mop","contrato epc","estado de pago","reajuste polinomico",
         "modificacion contractual","termino anticipado de contrato","avance fisico","inicio de obras",
         "paralizacion de obras","arbitraje de obra","recepcion provisoria","recepcion definitiva",
         "accidente laboral","insolvencia constructora","liquidacion","consorcio constructor",
         "oferta economica","garantia de fiel cumplimiento"
     ],
-    "salud": [
+    "Salud": [
         "superintendencia de salud","isapres fallo suprema","tabla de factores","copagos",
         "convenio con fonasa","habilitacion sanitaria","apertura de clinica","expansion hospitalaria",
         "licitacion servicios de salud","adquisicion de clinica","compra de prestador","camas criticas",
         "capex clinico","acreditacion en salud","contrato con aseguradoras","telemedicina convenio",
         "sancion superintendencia de salud","ciberataque a clinica","brecha de datos pacientes"
     ],
-    "tecnologia": [
+    "Tecnologia": [
         "ciberataque","ransomware","filtracion de datos","data center","region de datos","cloud publica",
         "contrato cloud","hiperescalador","hiperscaler","ia generativa","modelo de lenguaje",
         "semiconductores","centro de desarrollo","subtel licitacion 5g","bloques de espectro",
@@ -220,7 +220,7 @@ INDUSTRIA_KEYWORDS = {
         "open banking","sandbox regulatorio","levantamiento de capital","ronda serie a","ronda serie b",
         "alianza tecnologica","despliegue de fibra optica"
     ],
-    "infraestructura": [
+    "Infraestructura": [
         "concesion vial","concesion aeroportuaria","concesion portuaria","licitacion de concesion",
         "adjudicacion de concesion","oferta economica vpi","vpi","inicio de obras","avance de obras",
         "recepcion provisoria","recepcion definitiva","tarifa de peaje","alza de peajes",
@@ -228,7 +228,7 @@ INDUSTRIA_KEYWORDS = {
         "obras adicionales","puente","tunel","ferrocarril","efe","linea de metro","embalse",
         "obra hidraulica"
     ],
-    "malls": [
+    "Malls": [
         "gla","superficie arrendable","ocupacion de malls","vacancia de malls","ventas de arrendatarios",
         "tenant sales","renta variable","canon de arriendo","arriendo variable","tenant mix",
         "apertura de tienda ancla","tienda ancla","expansion de mall","remodelacion de mall",
@@ -238,10 +238,10 @@ INDUSTRIA_KEYWORDS = {
 }
 
 NEGATIVOS_POR_INDUSTRIA = {
-    "bancaria": ["banco de sangre","banco de alimentos"],
-    "mineria": ["mineria de datos","minecraft"],
-    "tecnologia": ["videojuego","rumor de lanzamiento"],
-    "malls": ["mal"]  # errores ortográficos frecuentes
+    "Bancaria": ["banco de sangre","banco de alimentos"],
+    "Mineria": ["mineria de datos","minecraft"],
+    "Tecnologia": ["videojuego","rumor de lanzamiento"],
+    "Malls": ["mal"]  # errores ortográficos frecuentes
 }
 
 # ----------------- HELPERS -----------------
@@ -423,26 +423,23 @@ RUN_STATS = {"counts": defaultdict(int), "errors": defaultdict(set)}
 _ER_ARTICLES_CACHE_BY_HOST: dict[str, list] = {}  # cache separado por fuente
 
 # ============== Ventana dinámica según hora Chile ==============
-def _compute_hours_back(now_cl: datetime | None = None) -> int:
+def _compute_hours_back(now_cl: datetime | None = None) -> float:
     """
-    08:xx -> 14 horas
-    18:xx -> 10 horas
-    Otros momentos:
-      - AM -> 14h
-      - PM -> 10h
-    Permite override con env var HOURS_BACK_OVERRIDE (int).
+    Ventana dinámica (CL):
+      - AM  -> 14.5 horas
+      - PM  -> 10.5 horas
+    Permite override con env var HOURS_BACK_OVERRIDE (float, ej: 14.5).
     """
     override = os.getenv("HOURS_BACK_OVERRIDE", "").strip()
-    if override.isdigit():
-        return max(1, int(override))
+    if override:
+        try:
+            val = float(override.replace(",", "."))  # por si pones 14,5
+            return max(0.5, val)
+        except ValueError:
+            pass  # si no es número, seguimos con la lógica por defecto
 
     now_cl = now_cl or datetime.now(CL_TZ)
-    hr = now_cl.hour
-    if hr == 8:
-        return 14
-    if hr == 18:
-        return 10
-    return 14 if hr < 12 else 10
+    return 14.5 if now_cl.hour < 12 else 10.5
 
 # ===================== FETCH: Event Registry (por host) =====================
 def _parse_er_dt_to_iso(dt_str: str) -> str:
@@ -732,7 +729,7 @@ def compilar_reporte():
         "<div style='max-width:860px;margin:0 auto;background:#ffffff;border:1px solid #eaeaea;border-radius:8px;padding:20px;'>"
     )
 
-    titulo_encabezado = f"Reporte de Noticias (últimas {HOURS_BACK} hrs) { _fecha_larga_cl() }"
+    titulo_encabezado = f"Reporte de Noticias (últimas {HOURS_BACK:.1f} hrs) { _fecha_larga_cl() }"
     html_parts.append(
         f"<h2 style='margin:0 0 16px 0;font-size:18px;line-height:1.3;font-weight:700;'>{html.escape(titulo_encabezado)}</h2>"
     )
@@ -813,7 +810,7 @@ def run_once():
     # Ajusta la ventana según hora de Chile
     global HOURS_BACK
     HOURS_BACK = _compute_hours_back(datetime.now(CL_TZ))
-    print(f"⏱️ Ventana dinámica seleccionada: últimas {HOURS_BACK} horas (CLT).", flush=True)
+    print(f"⏱️ Ventana dinámica seleccionada: últimas {HOURS_BACK:.1f} horas (CLT).", flush=True)
 
     # Limpia cachés por si corres muchas veces seguidas
     _ER_ARTICLES_CACHE_BY_HOST.clear()
